@@ -345,20 +345,30 @@ class BertModelStage2(nn.Module):
                 return loss
 
     def calculate_type_aware_contrastive_loss(self, words_emb, words_corresponding_label_emb, label_ids):
+        # 输入单词的数量
         num_words = len(label_ids)
+
+        # 创建掩码以识别匹配标签（正对）
         pos_words_labels = torch.eq(label_ids.unsqueeze(1).repeat(1, num_words),
                                     label_ids.unsqueeze(0).repeat(num_words, 1)
                                     ).float().to(self.args.device)
 
+        # 将标签嵌入与词嵌入以两种不同顺序连接
         labels_words_emb = torch.cat((words_corresponding_label_emb, words_emb), dim=-1)
         words_labels_emb = torch.cat((words_emb, words_corresponding_label_emb), dim=-1)
+
+        # 通过矩阵乘法计算对数并进行归一化
         logits = torch.matmul(labels_words_emb, words_labels_emb.T)
         logits = F.normalize(logits, p=2, dim=0)
+
+        # 对对数应用温度缩放
         logits = logits / torch.tensor(0.05)
 
+        # 对数的softmax和log softmax
         softmax_logits = torch.softmax(logits, dim=-1)
         log_softmax_logits = torch.log(softmax_logits)
 
+        # 计算对比损失
         lines_loss = -torch.mean(log_softmax_logits * pos_words_labels, dim=-1)
         loss = torch.sum(lines_loss)
 
