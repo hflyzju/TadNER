@@ -21,6 +21,7 @@ def train_stage1(args):
         strict_range = [i for i in range(args.source_class_num)]
         labels_ids_train = convert_label_to_id(labels_train, args, strict_range=strict_range)
 
+    # 构造span检测的数据集
     dataloader_source_train = GetDataLoader(args=args,
                                             sentences=sentences_train,
                                             labels_ids=labels_ids_train,
