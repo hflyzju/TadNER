@@ -120,23 +120,29 @@ def convert_label_id_to_io(labels_ids_sentences):
 
 
 def convert_to_feature(sentence, label_ids, args):
+    # 定义最大序列长度
     max_seq_length = args.max_seq_length
     sentence_tokens = []
     label_ids_tokens = []
+
+    # 将句子和标签ID转换为令牌
     for word, label_id in zip(sentence, label_ids):
         word_tokens = args.tokenizer.tokenize(word)
         label_id_tokens = [label_id] + [-1] * (len(word_tokens) - 1)
-        if len(word_tokens) == 0:  # Meet special space character
+        if len(word_tokens) == 0:  # 遇到特殊的空白字符
             word_tokens = args.tokenizer.tokenize('[UNK]')
             label_id_tokens = [label_id]
         sentence_tokens.extend(word_tokens)
         label_ids_tokens.extend(label_id_tokens)
 
+    # 添加特殊令牌
     sentence_tokens = ["[CLS]"] + sentence_tokens + ["[SEP]"]
     label_ids_tokens = [-1] + label_ids_tokens + [-1]
 
+    # 将令牌转换为ID
     input_ids = args.tokenizer.convert_tokens_to_ids(sentence_tokens)
 
+    # 进行填充以达到最大序列长度
     padding_length = max_seq_length - len(input_ids)
     if padding_length >= 0:
         attention_mask = [1] * len(input_ids) + [0] * padding_length
@@ -149,11 +155,13 @@ def convert_to_feature(sentence, label_ids, args):
 
     token_type_ids = [0] * max_seq_length
 
+    # 断言确保长度匹配
     assert len(input_ids_padded) == max_seq_length
     assert len(token_type_ids) == max_seq_length
     assert len(attention_mask) == max_seq_length
     assert len(label_ids_tokens) == max_seq_length
 
+    # 返回处理后的特征
     return InputFeature(input_ids_padded, token_type_ids, attention_mask, label_ids_tokens)
 
 
@@ -374,15 +382,20 @@ class MyDataset(Dataset):  #
 #####################################################
 # other utils
 
+# 定义获取支持集原型的函数
 def get_original_prototypes(args, bert_encoder_pt, support_sentences, support_labels_ids, label_dict, label_types_id):
     """
-    get prototypes by support
+    通过支持集获取原型表示
     """
 
+    # 初始化存储每个标签类型原型嵌入的列表
     spans_emb = [[] for i in range(len(label_types_id))]
+    # 遍历支持集中的句子和标签id
     for support_sentence, support_label_id in zip(support_sentences, support_labels_ids):
+        # 将句子转换为模型可处理的特征
         feature = convert_to_feature(support_sentence, support_label_id, args)
 
+        # 使用BERT编码器对特征进行编码
         bert_encoder_outputs = \
             bert_encoder_pt(
                 input_ids=torch.tensor([feature.input_ids]).to(args.device),
@@ -391,55 +404,80 @@ def get_original_prototypes(args, bert_encoder_pt, support_sentences, support_la
                 output_hidden_states=True
             )
 
+        # 计算最后四层隐藏状态的平均值
         bert_encoder_output = (torch.sum(torch.stack(bert_encoder_outputs.hidden_states[-4:]), 0) / 4).squeeze(1)
+        # 展平BERT输出
         bert_output_raw_flatten = torch.flatten(bert_encoder_output, start_dim=0, end_dim=1)[:]
+        # 获取标签
         labels_flatten = torch.tensor(feature.label_ids)[:]
+        # 过滤出有效的索引
         filtered_indices = torch.where(labels_flatten >= 0)[0].cpu().numpy().tolist()
 
+        # 根据有效索引过滤BERT输出
         filtered_bert_output_raw_flatten = bert_output_raw_flatten[filtered_indices]
+        # 提取实体的跨度标签
         span_label_support = extract_entity_span_label(support_label_id)
+        # 对每个跨度求和并平均，得到跨度的嵌入
         for span in span_label_support:
             span_emb = torch.sum(filtered_bert_output_raw_flatten[span["start"]:span["end"] + 1], 0) / (
                     span["end"] + 1 - span["start"])
 
+            # 将跨度嵌入添加到对应标签的列表中
             spans_emb[label_dict[span["label"]]].append(span_emb)
 
+    # 初始化原型嵌入列表
     proto_emb = []
+    # 对每个标签类型的跨度嵌入求均值，得到该标签的原型表示
     for item in spans_emb:
         item_ = torch.stack(item)
         proto_emb.append(torch.mean(item_, 0))
 
+    # 将所有原型表示堆叠并进行归一化处理
     proto_emb = torch.stack(proto_emb)
     proto_emb = F.normalize(proto_emb, p=2, dim=0)
 
+    # 返回原型表示
     return proto_emb
 
 
+# 定义一个函数，用来获取代理标签的嵌入表示
 def get_proxy_label_emb(args, ModelStage2, label_types_id):
     """
-    get emb of proxy-labels
+    获取代理标签的嵌入表示
     """
+    # 根据提供的标签类型ID列表，从args中映射得到代理标签列表
     proxy_labels = [args.id2proxy_label[id_support] for id_support in label_types_id]
-    labels_last_hidden_states = []
+    labels_last_hidden_states = []  # 初始化一个列表，用于存储每个标签的最后隐藏状态
+
+    # 遍历每一个代理标签
     for label in proxy_labels:
-        # label = 'Entity Type' + label
+        # 对每个标签进行编码，以便可以传给BERT模型
         input_ids = args.tokenizer.encode(label, add_special_tokens=True)
+        # 将编码后的标签转换为tensor，并发送到指定的设备上（例如GPU）
         input_ids = torch.tensor([input_ids]).to(args.device)
 
+        # 使用ModelStage2的encoder对输入的id进行编码，并且要求输出隐藏状态
         bert_encoder_outputs = ModelStage2.encoder(
             input_ids=input_ids,
             output_hidden_states=True
         )
 
+        # 计算最后四层隐藏状态的平均值，并去掉批次维度
         bert_encoder_output = (torch.sum(torch.stack(bert_encoder_outputs.hidden_states[-4:]), 0) / 4).squeeze(1)
+        # 将最后的隐藏状态展平
         last_hidden_states = torch.flatten(bert_encoder_output, start_dim=0, end_dim=1)[:]
 
+        # 判断是否使用多层感知机（MLP）进行处理
         if args.stage2_use_mlp:
+            # 如果使用MLP，则将最后的隐藏状态通过MLP处理，然后添加到列表中
             labels_last_hidden_states.append(ModelStage2.mlp(last_hidden_states[0]))
         else:
+            # 如果不使用MLP，则直接将最后的隐藏状态添加到列表中
             labels_last_hidden_states.append(last_hidden_states[0])
 
+    # 将所有标签的最后隐藏状态堆叠起来，形成一个tensor
     all_proto_emb_proxy = torch.stack(labels_last_hidden_states)
+    # 返回这个tensor，它包含了所有代理标签的嵌入表示
     return all_proto_emb_proxy
 
 
