@@ -1038,13 +1038,19 @@ def evaluate_episodes(args):
     return metric_stage1_all, metric_all_stages_all, metric_stage1_filtered_all
 
 
-def cal_span_threshold(args, ModelStage2, all_label_emb, sentences_support, labels_ids_support, label_types_id,
-                       label_dict):
+# 定义计算跨度阈值的函数
+def cal_span_threshold(args, ModelStage2, all_label_emb, sentences_support, labels_ids_support, label_types_id, label_dict):
+    # 获取BERT编码器
     bert_encoder_pt = ModelStage2.encoder
+    # 初始化两个列表，用于存储所有的最大logit值
     all_max_logit = []
     all_max_logit_o_tokens = []
+
+    # 遍历支持集中的句子和对应的标签ID
     for sentence, label_ids in zip(sentences_support, labels_ids_support):
+        # 将句子和标签ID转换为模型的输入特征
         feature = convert_to_feature(sentence, label_ids, args)
+        # 使用BERT编码器对输入特征进行编码
         bert_encoder_outputs = \
             bert_encoder_pt(
                 input_ids=torch.tensor([feature.input_ids]).to(args.device),
@@ -1053,36 +1059,51 @@ def cal_span_threshold(args, ModelStage2, all_label_emb, sentences_support, labe
                 output_hidden_states=True
             )
 
+        # 计算最后四层隐藏状态的平均值
         bert_encoder_output = (torch.sum(torch.stack(bert_encoder_outputs.hidden_states[-4:]), 0) / 4).squeeze(1)
 
+        # 展平BERT输出的原始特征
         bert_output_raw_flatten = torch.flatten(bert_encoder_output, start_dim=0, end_dim=1)[:]
+        # 获取标签ID并展平
         labels_flatten = torch.tensor(feature.label_ids)[:]
+        # 过滤出有效索引
         filtered_indices = torch.where(labels_flatten >= 0)[0].cpu().numpy().tolist()
+        # 获取过滤后的BERT输出特征
         filtered_bert_output_raw_flatten = bert_output_raw_flatten[filtered_indices]
 
+        # 过滤出标签ID为0的索引（通常代表“其他”或非实体标签）
         filtered_indices_o = torch.where(labels_flatten == 0)[0].cpu().numpy().tolist()
+        # 获取对应的BERT输出特征
         filtered_bert_output_raw_flatten_o = bert_output_raw_flatten[filtered_indices_o]
+        # 计算与所有标签嵌入向量的logits，并取出最大值
         logits_o_tokens = torch.matmul(filtered_bert_output_raw_flatten_o, all_label_emb.T).detach().cpu().numpy()
         max_logit_o_tokens = np.max(logits_o_tokens, axis=-1).tolist()
         all_max_logit_o_tokens.extend(max_logit_o_tokens)
 
+        # 提取金标准实体跨度
         spans_gold = extract_entity_span_label(label_ids)
 
+        # 遍历每个实体跨度
         for span in spans_gold:
+            # 获取跨度对应的BERT输出特征
             words_emb = filtered_bert_output_raw_flatten[span["start"]:span["end"] + 1]
+            # 获取对应标签的嵌入向量
             label_emb = all_label_emb[label_dict[span["label"]]]
+            # 计算logit值
             logit = torch.matmul(words_emb, label_emb).detach().cpu().numpy().tolist()
             all_max_logit.extend(logit)
 
+    # 将所有logit值转换为numpy数组
     all_max_logit = np.array(all_max_logit)
 
+    # 如果目标数据集是'I2B2'，则使用平均值作为阈值，否则使用最小值
     if args.dataset_target in ['I2B2']:
-        # Because the entities in I2B2 are too sparse, we use the mean,
-        # and for the rest we still take the min calculation
+        # 因为I2B2数据集中的实体较为稀疏，所以使用平均值，其它情况则使用最小值计算
         span_threshold = np.mean(all_max_logit)
     else:
         span_threshold = np.min(all_max_logit)
 
+    # 返回计算得到的跨度阈值
     return span_threshold
 
 
