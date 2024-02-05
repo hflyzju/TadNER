@@ -180,63 +180,69 @@ def convert_features_to_dataset(features):
 
 def read_conll2003_format_data_from_file(filepath, data_name, read_samples=False):
     """
+    从文件中读取CoNLL 2003格式的数据。
 
-    :param filepath: conll2003_format file
-    :param dataset_name:
-    :return:
+    :param filepath: CoNLL2003格式的文件路径
+    :param dataset_name: 数据集的名称
+    :return: 返回两个列表，包含了分词后的句子和对应的标签
     """
 
     with open(filepath, "r", encoding='UTF-8') as f:  # 打开文件
-        data = f.readlines()
-        sentences_word = []
-        sentences_label = []
-        sentence_word = []
-        sentence_label = []
-        for line in data:
-            line = line.replace('\t', ' ')
-            if "-DOCSTART-" not in line:
-                if len(line.split(' ')) == 1:  # division marks between sentences
-                    sentences_word.append(sentence_word)
-                    sentences_label.append(sentence_label)
-                    sentence_word = []  # new sentence
-                    sentence_label = []
-                else:
-                    sentence_word.append(line.replace('\n', '').split(' ')[0])
+        data = f.readlines()  # 读取文件所有行
+        sentences_word = []  # 存储分词后的句子
+        sentences_label = []  # 存储句子对应的标签
+        sentence_word = []  # 存储当前处理的句子的词
+        sentence_label = []  # 存储当前处理的句子的标签
+        for line in data:  # 遍历文件的每一行
+            line = line.replace('\t', ' ')  # 替换制表符为空格
+            if "-DOCSTART-" not in line:  # 忽略文档开始标记
+                if len(line.split(' ')) == 1:  # 句子之间的分隔符
+                    sentences_word.append(sentence_word)  # 添加当前句子到句子列表
+                    sentences_label.append(sentence_label)  # 添加当前句子标签到标签列表
+                    sentence_word = []  # 开始新句子的词列表
+                    sentence_label = []  # 开始新句子的标签列表
+                else:  # 如果不是分隔符，则处理词和标签
+                    sentence_word.append(line.replace('\n', '').split(' ')[0])  # 添加词到当前句子
+                    # 根据条件添加标签
                     if read_samples or data_name in ['WNUT17', 'GUM', 'I2B2', 'FEW-NERD-INTRA', 'FEW-NERD-INTER']:
                         sentence_label.append(line.replace('\n', '').split(' ')[1])
                     else:
                         sentence_label.append(line.replace('\n', '').split(' ')[3])
 
+        # 过滤掉空的句子
         sentences_word = [item for item in sentences_word if len(item) > 0]
         sentences_label = [item for item in sentences_label if len(item) > 0]
-        return sentences_word, sentences_label
+        return sentences_word, sentences_label  # 返回处理后的词列表和标签列表
 
 
+# 定义一个函数，用于从文件中读取episodes数据
 def read_episodes_data_from_file(filepath, args, start=0, end=5000):
-    episodes_data = []
-    with open(filepath) as f:  # open file
-        lines = f.readlines()
-        print('--------getting episodes sentence and label ids---------')
-        for line in tqdm(lines[start:end]):
+    episodes_data = []  # 创建一个空列表，用于存储episodes数据
+
+    with open(filepath) as f:  # 使用with语句打开文件，确保文件最后能被正确关闭
+        lines = f.readlines()  # 读取文件的所有行
+        print('--------获取episodes的句子和标签id---------')
+        for line in tqdm(lines[start:end]):  # 使用tqdm显示进度条，迭代指定范围内的行
             # print(line)
 
-            line = json.loads(line)
-            support_sentences = line["support"]["word"]
-            support_labels = line["support"]["label"]
-            query_sentences = line["query"]["word"]
-            query_labels = line["query"]["label"]
-            support_labels_ids = convert_label_to_id(support_labels, args)
-            query_labels_ids = convert_label_to_id(query_labels, args)
+            line = json.loads(line)  # 解析每一行的JSON格式数据
+            support_sentences = line["support"]["word"]  # 获取support部分的句子
+            support_labels = line["support"]["label"]  # 获取support部分的标签
+            query_sentences = line["query"]["word"]  # 获取query部分的句子
+            query_labels = line["query"]["label"]  # 获取query部分的标签
+            support_labels_ids = convert_label_to_id(support_labels, args)  # 将support的标签转换为id
+            query_labels_ids = convert_label_to_id(query_labels, args)  # 将query的标签转换为id
 
+            # 创建一个字典，包含support和query的句子及其对应的标签id
             episode_data = {
                 "support_sentences": support_sentences,
                 "support_labels_ids": support_labels_ids,
                 "query_sentences": query_sentences,
                 "query_labels_ids": query_labels_ids,
             }
-            episodes_data.append(episode_data)
+            episodes_data.append(episode_data)  # 将这个字典添加到episodes_data列表中
 
-    return episodes_data
+    return episodes_data  # 返回包含所有episodes数据的列表
 
 
 def read_cross_domain_target_support_data_from_file(args):
